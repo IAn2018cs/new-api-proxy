@@ -4,6 +4,7 @@ const { URL } = require('url');
 
 const TARGET_DOMAIN = process.env.TARGET_DOMAIN || 'https://example.com';
 const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.API_KEY || '';
 
 const targetUrl = new URL(TARGET_DOMAIN);
 const isHttps = targetUrl.protocol === 'https:';
@@ -25,15 +26,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  const headers = { ...req.headers, host: targetUrl.host };
+
+  if (API_KEY) {
+    if (headers['authorization']) {
+      headers['authorization'] = `Bearer ${API_KEY}`;
+    }
+    if (headers['x-api-key']) {
+      headers['x-api-key'] = API_KEY;
+    }
+    if (headers['api-key']) {
+      headers['api-key'] = API_KEY;
+    }
+    if (!headers['authorization'] && !headers['x-api-key'] && !headers['api-key']) {
+      headers['authorization'] = `Bearer ${API_KEY}`;
+    }
+  }
+
   const options = {
     hostname: targetUrl.hostname,
     port: targetUrl.port || (isHttps ? 443 : 80),
     path: req.url,
     method: req.method,
-    headers: {
-      ...req.headers,
-      host: targetUrl.host,
-    },
+    headers,
   };
 
   const proxyReq = httpModule.request(options, (proxyRes) => {
@@ -54,15 +69,29 @@ const server = http.createServer((req, res) => {
 
 // WebSocket upgrade handling
 server.on('upgrade', (req, socket, head) => {
+  const headers = { ...req.headers, host: targetUrl.host };
+
+  if (API_KEY) {
+    if (headers['authorization']) {
+      headers['authorization'] = `Bearer ${API_KEY}`;
+    }
+    if (headers['x-api-key']) {
+      headers['x-api-key'] = API_KEY;
+    }
+    if (headers['api-key']) {
+      headers['api-key'] = API_KEY;
+    }
+    if (!headers['authorization'] && !headers['x-api-key'] && !headers['api-key']) {
+      headers['authorization'] = `Bearer ${API_KEY}`;
+    }
+  }
+
   const options = {
     hostname: targetUrl.hostname,
     port: targetUrl.port || (isHttps ? 443 : 80),
     path: req.url,
     method: req.method,
-    headers: {
-      ...req.headers,
-      host: targetUrl.host,
-    },
+    headers,
   };
 
   const proxyReq = httpModule.request(options);
@@ -95,4 +124,5 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, () => {
   console.log(`Proxy server running on port ${PORT}`);
   console.log(`Forwarding to: ${TARGET_DOMAIN}`);
+  console.log(`API key override: ${API_KEY ? 'enabled' : 'disabled'}`);
 });

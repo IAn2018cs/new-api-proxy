@@ -6,4 +6,5 @@ services:
     environment:
       - TARGET_DOMAIN=${TARGET_DOMAIN:-https://example.com}
       - PORT=${PORT:-3000}
+      - API_KEY=${API_KEY:-}
     restart: unless-stopped
