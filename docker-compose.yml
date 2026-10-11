@@ -7,4 +7,12 @@ services:
       - TARGET_DOMAIN=${TARGET_DOMAIN:-https://example.com}
       - PORT=${PORT:-3000}
       - API_KEY=${API_KEY:-}
+      - CONNECT_TIMEOUT_MS=${CONNECT_TIMEOUT_MS:-10000}
+      - UPSTREAM_IDLE_TIMEOUT_MS=${UPSTREAM_IDLE_TIMEOUT_MS:-300000}
+      - KEEP_ALIVE_TIMEOUT_MS=${KEEP_ALIVE_TIMEOUT_MS:-4000}
+      - SHUTDOWN_TIMEOUT_MS=${SHUTDOWN_TIMEOUT_MS:-10000}
+      - LOG_DIR=/app/logs
+    volumes:
+      - ./logs:/app/logs
+    stop_grace_period: 15s
     restart: unless-stopped

@@ -4,7 +4,9 @@
   "description": "Simple reverse proxy server",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test",
+    "benchmark": "node scripts/benchmark.cjs"
   },
   "engines": {
     "node": ">=18"
