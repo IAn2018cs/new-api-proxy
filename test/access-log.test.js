@@ -54,6 +54,7 @@ async function proxyFixture(t, directory, handler = (_req, res) => res.end('ok')
   const upstreamPort = await listen(upstream);
   const logger = createAccessLogger({ directory, ...loggerOptions });
   const proxy = createProxyServer({ target: `http://127.0.0.1:${upstreamPort}`,
+    upstreamProxyUrl: '',
     apiKey: '', accessLogger: logger, shutdownTimeout: 50 });
   const port = await listen(proxy);
   const closed = once(proxy, 'close');

@@ -31,7 +31,8 @@ async function boot(file, target) {
     env: { ...process.env, PORT: String(port), TARGET_DOMAIN: target, API_KEY: '',
       CONNECT_TIMEOUT_MS: '10000', UPSTREAM_IDLE_TIMEOUT_MS: '300000',
       KEEP_ALIVE_TIMEOUT_MS: '4000', SHUTDOWN_TIMEOUT_MS: '1000',
-      LOG_DIR: path.join(logDirectory, String(port)) },
+      LOG_DIR: path.join(logDirectory, String(port)), UPSTREAM_PROXY_URL: '' },
+    // Benchmark the unchanged direct path regardless of the caller's proxy env.
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.push(child);

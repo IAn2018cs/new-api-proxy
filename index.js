@@ -2,6 +2,7 @@ const http = require('http');
 const https = require('https');
 const { performance } = require('node:perf_hooks');
 const { createAccessLogger, formatTimestamp } = require('./access-log');
+const { createUpstreamAgents } = require('./upstream-proxy');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,6 +13,20 @@ const corsHeaders = {
 
 const hopHeaders = new Set(['connection', 'keep-alive', 'proxy-authenticate',
   'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
+
+const generationPath = /(?:^|[/:])(?:completions|responses|messages|generate|generations|generateContent|streamGenerateContent|predict|rawPredict|streamRawPredict|speech|transcriptions|translations)(?:\/|$)/i;
+
+function mayRetry(req) {
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || req.headers['transfer-encoding'] ||
+    req.headers['content-length'] && Number(req.headers['content-length']) !== 0) return false;
+  const query = req.url.indexOf('?');
+  let pathname = query === -1 ? req.url : req.url.slice(0, query);
+  if (pathname.includes('%')) {
+    try { pathname = decodeURIComponent(pathname); }
+    catch { return false; }
+  }
+  return !generationPath.test(pathname);
+}
 
 function envNumber(name, fallback, maximum = 2 ** 31 - 1) {
   const value = process.env[name];
@@ -81,6 +96,8 @@ function rawResponse(response, headers) {
 function createProxyServer({
   target = process.env.TARGET_DOMAIN || 'https://example.com',
   apiKey = process.env.API_KEY || '',
+  upstreamProxyUrl = process.env.UPSTREAM_PROXY_URL || '',
+  tlsOptions,
   connectTimeout = envNumber('CONNECT_TIMEOUT_MS', 10000),
   upstreamTimeout = envNumber('UPSTREAM_IDLE_TIMEOUT_MS', 300000),
   freeSocketTimeout = envNumber('KEEP_ALIVE_TIMEOUT_MS', 4000),
@@ -92,17 +109,15 @@ function createProxyServer({
   if (!['http:', 'https:'].includes(targetUrl.protocol)) {
     throw new Error('TARGET_DOMAIN must use http:// or https://');
   }
-  const secure = targetUrl.protocol === 'https:';
+  const protocol = targetUrl.protocol;
+  const secure = protocol === 'https:';
   const transport = secure ? https : http;
-  const hostname = targetUrl.hostname;
+  const hostname = targetUrl.hostname.replace(/^\[|\]$/g, '');
   const port = targetUrl.port || (secure ? 443 : 80);
   const host = targetUrl.host;
-  const agent = new transport.Agent({
-    keepAlive: true,
-    scheduling: 'lifo',
-    maxFreeSockets: 256,
-    timeout: freeSocketTimeout,
-  });
+  const upstream = createUpstreamAgents({ target: targetUrl, proxyUrl: upstreamProxyUrl,
+    freeSocketTimeout, connectTimeout, tlsOptions });
+  const agent = upstream.agent;
   const sockets = new Set();
   const logger = accessLogger === undefined ? createAccessLogger({ directory: logDirectory }) : accessLogger;
   const session = `${process.pid}-${Date.now().toString(36)}`;
@@ -145,7 +160,9 @@ function createProxyServer({
       }
     }
     return {
+      ...tlsOptions,
       hostname,
+      protocol,
       port,
       path: req.url,
       method: req.method,
@@ -184,13 +201,12 @@ function createProxyServer({
     let clientGone = false;
     let retries = 0;
     const options = requestOptions(req);
-    const canRetry = (req.method === 'GET' || req.method === 'HEAD') &&
-      !req.headers['transfer-encoding'] &&
-      (!req.headers['content-length'] || Number(req.headers['content-length']) === 0);
+    const canRetry = mayRetry(req);
 
     const cleanup = () => {
       req.unpipe(upstreamRequest);
       upstreamResponse?.destroy();
+      upstream.cancel(upstreamRequest);
       upstreamRequest?.destroy();
     };
     const cancel = () => {
@@ -221,7 +237,7 @@ function createProxyServer({
     });
 
     const forward = () => {
-      upstreamRequest = transport.request(retries ? { ...options, agent: false } : options, (response) => {
+      upstreamRequest = transport.request(retries ? { ...options, agent: upstream.freshAgent } : options, (response) => {
         upstreamResponse = response;
         response.on('error', fail);
         response.on('aborted', () => fail(Object.assign(new Error('Upstream response aborted'), { code: 'ECONNRESET' })));
@@ -233,7 +249,7 @@ function createProxyServer({
         response.pipe(res);
       });
       const attempt = upstreamRequest;
-      watchConnection(attempt, connectTimeout, fail, secure);
+      if (!upstream.proxied) watchConnection(attempt, connectTimeout, fail, secure);
       attempt.on('timeout', () => fail(timeoutError('Upstream became idle')));
       attempt.on('error', (err) => {
         // Only replay a bodyless safe request after a stale pooled socket fails.
@@ -266,6 +282,7 @@ function createProxyServer({
     let closed = false;
     let responseStarted = false;
     const cleanup = () => {
+      upstream.cancel(upstreamRequest);
       upstreamRequest?.destroy();
       upstreamResponse?.destroy();
       peer?.destroy();
@@ -302,7 +319,7 @@ function createProxyServer({
     }
 
     upstreamRequest = transport.request(requestOptions(req, true));
-    watchConnection(upstreamRequest, connectTimeout, fail, secure);
+    if (!upstream.proxied) watchConnection(upstreamRequest, connectTimeout, fail, secure);
     upstreamRequest.on('timeout', () => fail(timeoutError('WebSocket handshake became idle')));
     upstreamRequest.on('error', fail);
     upstreamRequest.on('upgrade', (response, socket, proxyHead) => {
@@ -357,16 +374,17 @@ function createProxyServer({
     socket.once('close', () => sockets.delete(socket));
   });
   server.on('close', () => {
-    agent.destroy();
+    upstream.destroy();
     logger?.close();
   });
   server.flushAccessLogs = () => logger?.close() || Promise.resolve();
+  server.upstreamProxyDescription = upstream.description;
   server.shutdown = () => {
     if (stopping) return;
     stopping = true;
     const timer = setTimeout(() => {
       for (const socket of sockets) socket.destroy();
-      agent.destroy();
+      upstream.destroy();
     }, shutdownTimeout);
     timer.unref();
     server.close(() => clearTimeout(timer));
@@ -382,6 +400,7 @@ if (require.main === module) {
     console.log(`[${formatTimestamp()}] Proxy server running on port ${server.address().port}`);
     console.log(`[${formatTimestamp()}] Forwarding to: ${process.env.TARGET_DOMAIN || 'https://example.com'}`);
     console.log(`[${formatTimestamp()}] API key override: ${process.env.API_KEY ? 'enabled' : 'disabled'}`);
+    console.log(`[${formatTimestamp()}] Upstream proxy: ${server.upstreamProxyDescription || 'direct'}`);
   });
   process.on('SIGTERM', () => server.shutdown());
   process.on('SIGINT', () => server.shutdown());

@@ -31,6 +31,7 @@ async function fixture(t, handler = (_req, res) => res.end('ok'), options = {}) 
   const upstreamPort = await listen(upstream);
   const proxy = createProxyServer({
     target: `http://127.0.0.1:${upstreamPort}`, apiKey: '',
+    upstreamProxyUrl: '',
     connectTimeout: 1000, upstreamTimeout: 1000,
     freeSocketTimeout: 500, shutdownTimeout: 50, ...options,
     accessLogger: options.accessLogger || null,
@@ -470,7 +471,7 @@ async function startChild(t, target) {
   const child = spawn(process.execPath, [path.join(__dirname, '..', 'index.js')], {
     env: { ...process.env, TARGET_DOMAIN: target, PORT: '0', API_KEY: '',
       CONNECT_TIMEOUT_MS: '1000', UPSTREAM_IDLE_TIMEOUT_MS: '1000',
-      KEEP_ALIVE_TIMEOUT_MS: '500', SHUTDOWN_TIMEOUT_MS: '50', LOG_DIR: logDirectory },
+      KEEP_ALIVE_TIMEOUT_MS: '500', SHUTDOWN_TIMEOUT_MS: '50', LOG_DIR: logDirectory, UPSTREAM_PROXY_URL: '' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let logs = '';

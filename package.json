@@ -6,9 +6,17 @@
   "scripts": {
     "start": "node index.js",
     "test": "node --test",
-    "benchmark": "node scripts/benchmark.cjs"
+    "benchmark": "node scripts/benchmark.cjs",
+    "benchmark:proxy": "node scripts/proxy-benchmark.cjs"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
+  },
+  "dependencies": {
+    "debug": "4.4.3",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "socks": "2.8.10",
+    "socks-proxy-agent": "8.0.5"
   }
 }
